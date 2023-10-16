@@ -34,5 +34,5 @@ outputs:
     description: 'The ARN of the task definition.'
 
 runs:
-  using: node18
+  using: node16
   main: dist/index.js
