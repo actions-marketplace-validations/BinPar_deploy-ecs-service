@@ -1,19 +1,36 @@
-name: 'The name of your action here'
-description: 'Provide a description here'
-author: 'Your name or organization here'
+name: 'BinPar Deploy ECS Service Action for GitHub Actions'
+description: 'Registers an Amazon ECS task definition, and deploys it to a service, but with more custom options than the official AWS GitHub Action.'
+author: 'Marcos González <marcos@binpar.com>'
 
 # Define your inputs here.
 inputs:
-  milliseconds:
-    description: 'Your input description here'
+  task-definition:
+    description: 'The path to the ECS task definition file to register.'
     required: true
-    default: '1000'
+  services-definition:
+    description: 'The path to the YAML with the services definition.'
+    required: true
+  region:
+    description: 'The AWS region to use.'
+    required: false
+  wait-for-service-stability:
+    description: 'Wait for the service to be stable before continuing.'
+    required: false
+    default: false
+  wait-for-minutes:
+    description: 'The number of minutes to wait for the service to be stable.'
+    required: false
+    default: 10
+  force-new-deploy:
+    description: 'Force a new deployment of the service.'
+    required: false
+    default: false
 
 # Define your outputs here.
 outputs:
-  time:
-    description: 'Your output description here'
+  task-definition-arn:
+    description: 'The ARN of the task definition.'
 
 runs:
-  using: node20
+  using: node18
   main: dist/index.js
