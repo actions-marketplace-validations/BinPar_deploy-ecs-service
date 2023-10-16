@@ -24,7 +24,7 @@ inputs:
   force-new-deploy:
     description: 'Force a new deployment of the service.'
     required: false
-    default: false
+    default: true
 
 # Define your outputs here.
 outputs:
