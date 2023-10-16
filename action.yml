@@ -1,5 +1,5 @@
 name: 'BinPar Deploy ECS Service Action for GitHub Actions'
-description: 'Registers an Amazon ECS task definition, and deploys it to a service, but with more custom options than the official AWS GitHub Action.'
+description: 'Registers an Amazon ECS task definition, and deploys it to a service, but with more options.'
 author: 'Marcos González <marcos@binpar.com>'
 
 # Define your inputs here.
