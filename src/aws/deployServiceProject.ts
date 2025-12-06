@@ -6,31 +6,41 @@ import {
   type CreateServiceCommandOutput,
   type UpdateServiceCommandOutput,
   type RegisterTaskDefinitionCommandInput,
+  type TaskDefinition,
+  type LoadBalancer,
 } from '@aws-sdk/client-ecs';
 import type { ServiceDefinition } from '../models/serviceDefinition';
 import { getECSClient } from './getECSClient';
-import { debug, setFailed, setOutput } from '@actions/core';
+import { debug, setOutput } from '@actions/core';
 import { getCluster, getServiceName } from '../utils';
 import { getSubnetsForNetworkConfiguration } from './getSubnetsForNetworkConfiguration';
+import { createOrUpdateTargetsGroups } from './createTargetGroup';
 
 async function createService(
   project: ServiceDefinition['projects'][number],
-  taskDefinitionArn: string,
+  taskDefinition: TaskDefinition,
+  loadBalancerConfigs: LoadBalancer[] | undefined,
 ) {
   const ecsClient = getECSClient();
   return ecsClient.send(
     new CreateServiceCommand({
       cluster: getCluster(project),
       serviceName: getServiceName(project),
-      taskDefinition: taskDefinitionArn,
+      taskDefinition: taskDefinition.taskDefinitionArn,
       capacityProviderStrategy: project.customCapacityProviderStrategy,
       networkConfiguration:
         project.customNetworkConfiguration ||
         (await getSubnetsForNetworkConfiguration(project)),
-      loadBalancers: [{}],
+      enableECSManagedTags: true,
+      enableExecuteCommand: true,
+      loadBalancers: project.autoCreateTargetGroups
+        ? loadBalancerConfigs
+        : project.loadBalancers,
+      desiredCount: project.desiredCount,
+      propagateTags: 'SERVICE',
       tags: [
         {
-          key: 'name',
+          key: 'project-name',
           value: project.name,
         },
         {
@@ -48,7 +58,8 @@ async function createService(
 
 async function updateService(
   project: ServiceDefinition['projects'][number],
-  taskDefinitionArn: string,
+  taskDefinition: TaskDefinition,
+  loadBalancerConfigs: LoadBalancer[] | undefined,
   forceNewDeploy: boolean,
 ) {
   const ecsClient = getECSClient();
@@ -56,12 +67,17 @@ async function updateService(
     new UpdateServiceCommand({
       cluster: getCluster(project),
       service: getServiceName(project),
-      taskDefinition: taskDefinitionArn,
-      forceNewDeployment: forceNewDeploy,
+      taskDefinition: taskDefinition.taskDefinitionArn,
+      capacityProviderStrategy: project.customCapacityProviderStrategy,
       networkConfiguration:
         project.customNetworkConfiguration ||
         (await getSubnetsForNetworkConfiguration(project)),
-      capacityProviderStrategy: project.customCapacityProviderStrategy,
+      enableExecuteCommand: true,
+      loadBalancers: project.autoCreateTargetGroups
+        ? loadBalancerConfigs
+        : project.loadBalancers,
+      desiredCount: project.desiredCount,
+      forceNewDeployment: forceNewDeploy,
     }),
   );
 }
@@ -73,21 +89,46 @@ export async function deployServiceProject(
   waitForServiceStabilityTimeout: number,
   forceNewDeploy: boolean,
 ) {
+  const projectTaskDefinition = { ...taskDefinition };
   try {
     const ecsClient = getECSClient();
+    projectTaskDefinition.family = `${project.client}-${project.name}-${project.environment}`;
+    if (project.secrets?.length) {
+      projectTaskDefinition.containerDefinitions?.forEach((container) => {
+        if (!container.secrets) {
+          container.secrets = [];
+        }
+        container.secrets.push(...project.secrets!);
+      });
+    }
     const registerResponse = await ecsClient.send(
-      new RegisterTaskDefinitionCommand(taskDefinition),
+      new RegisterTaskDefinitionCommand(projectTaskDefinition),
     );
-    const taskDefArn = registerResponse?.taskDefinition?.taskDefinitionArn;
-    if (!taskDefArn) {
+    const taskDefResponse = registerResponse?.taskDefinition;
+    if (!taskDefResponse) {
+      throw new Error('No task definition returned from ECS');
+    }
+    if (!taskDefResponse.taskDefinitionArn) {
       throw new Error('No ARN returned from ECS');
     }
-    setOutput('task-definition-arn', taskDefArn);
+    setOutput('task-definition-arn', taskDefResponse.taskDefinitionArn);
+    let loadBalancerConfigs: LoadBalancer[] | undefined;
+    if (project.autoCreateTargetGroups) {
+      loadBalancerConfigs = await createOrUpdateTargetsGroups(
+        project,
+        taskDefResponse,
+      );
+    }
     let res: CreateServiceCommandOutput | UpdateServiceCommandOutput;
     if (project.alreadyExists) {
-      res = await updateService(project, taskDefArn, forceNewDeploy);
+      res = await updateService(
+        project,
+        taskDefResponse,
+        loadBalancerConfigs,
+        forceNewDeploy,
+      );
     } else {
-      res = await createService(project, taskDefArn);
+      res = await createService(project, taskDefResponse, loadBalancerConfigs);
     }
     if (waitForServiceStability) {
       await waitUntilServicesStable(
@@ -100,11 +141,8 @@ export async function deployServiceProject(
     }
     return res;
   } catch (error) {
-    setFailed(
-      `Failed to register task definition in ECS: ${(error as Error).message}`,
-    );
     debug('Task definition contents:');
-    debug(JSON.stringify(taskDefinition, undefined, 4));
+    debug(JSON.stringify(projectTaskDefinition, undefined, 4));
     throw error;
   }
 }
